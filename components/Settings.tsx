@@ -4,12 +4,12 @@ import { useRestaurant } from '../context/RestaurantContext';
 import { supabase } from '../lib/supabase';
 import { 
   Settings as SettingsIcon, Building2 as StoreIcon, CreditCard, Lock, Plus, 
-  Trash2, Edit2, X, AlertCircle, CheckCircle2, CalendarClock, Clock, RefreshCw, Download, Upload 
+  Trash2, Edit2, X, RefreshCw, Download, Upload, CalendarClock
 } from 'lucide-react';
 
 const Settings: React.FC = () => {
   const { 
-    branches, payments, currentUser, 
+    branches, payments, currentUser, users, // 🔴 Added users to fetch owner details
     addBranch, updateBranch, deleteBranch, 
     updatePayment, updateUser, 
     exportBackup, importBackup 
@@ -111,22 +111,26 @@ const Settings: React.FC = () => {
 
   const handleApprovePayment = async (paymentId: string) => {
     if (!window.confirm("Approve this transaction?")) return;
-    const { data } = await supabase.from('store_payments').update({ status: 'PAID' }).eq('id', paymentId).select().single();
-    if (data) {
-      setLocalPayments(prev => prev.map(p => p.id === paymentId ? data : p));
-      updatePayment(paymentId, { status: 'PAID' });
-      alert("Payment Approved!");
-    }
+    
+    // 🔴 ১. সাথে সাথে ব্রাউজারের UI আপডেট (Optimistic Update)
+    setLocalPayments(prev => prev.map(p => p.id === paymentId ? { ...p, status: 'PAID' } : p));
+    updatePayment(paymentId, { status: 'PAID' });
+    
+    // 🔴 ২. ব্যাকগ্রাউন্ডে ডেটাবেস আপডেট
+    await supabase.from('store_payments').update({ status: 'PAID' }).eq('id', paymentId);
+    alert("Payment Approved!");
   };
 
   const handleRejectPayment = async (paymentId: string) => {
     if (!window.confirm("Reject this transaction?")) return;
-    const { data } = await supabase.from('store_payments').update({ status: 'REJECTED' }).eq('id', paymentId).select().single();
-    if (data) {
-      setLocalPayments(prev => prev.map(p => p.id === paymentId ? data : p));
-      updatePayment(paymentId, { status: 'REJECTED' });
-      alert("Payment Rejected!");
-    }
+    
+    // 🔴 ১. সাথে সাথে ব্রাউজারের UI আপডেট (Optimistic Update)
+    setLocalPayments(prev => prev.map(p => p.id === paymentId ? { ...p, status: 'REJECTED' } : p));
+    updatePayment(paymentId, { status: 'REJECTED' });
+    
+    // 🔴 ২. ব্যাকগ্রাউন্ডে ডেটাবেস আপডেট
+    await supabase.from('store_payments').update({ status: 'REJECTED' }).eq('id', paymentId);
+    alert("Payment Rejected!");
   };
 
   const handlePasswordUpdate = async (e: React.FormEvent) => {
@@ -202,7 +206,6 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* 🔴 Buttons are now permanently visible (opacity-100) 🔴 */}
                 {isSuperAdmin && (
                   <div className="flex flex-wrap justify-end gap-2 pt-4 border-t border-slate-200 mt-4">
                     <button onClick={() => handleDownloadClick(branch.id, branch.name)} disabled={backingUpBranchId === branch.id} title={`Download Backup for ${branch.name}`} className="p-2.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 rounded-xl transition-colors">
@@ -279,6 +282,7 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
+          {/* 🔴 NEW: Updated Branch Status Table with Due Logic & Owner Info 🔴 */}
           <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm">
             <div className="flex items-center gap-3 mb-8">
               <StoreIcon className="w-6 h-6 text-blue-500" />
@@ -288,12 +292,16 @@ const Settings: React.FC = () => {
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full text-left whitespace-nowrap">
                 <thead>
                   <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
                     <th className="px-6 py-5">Branch Name</th>
+                    <th className="px-6 py-5">Owner Name</th>
+                    <th className="px-6 py-5">Phone</th>
                     <th className="px-6 py-5 text-center">Monthly Fee</th>
-                    <th className="px-6 py-5 text-center">Status</th>
+                    <th className="px-6 py-5 text-center text-rose-500">Due Months</th>
+                    <th className="px-6 py-5 text-center text-rose-500">Total Due</th>
+                    <th className="px-6 py-5 text-center">Current Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -303,10 +311,36 @@ const Settings: React.FC = () => {
                     const isPending = branchPayments.some(p => p.status === 'PENDING');
                     const status = isPaid ? 'PAID' : (isPending ? 'PENDING' : 'DUE');
                     
+                    // 🔴 Get Owner Details
+                    const branchUser = users?.find(u => u.branch_id === branch.id && u.role !== UserRole.SUPER_ADMIN);
+                    const ownerName = branchUser?.name || 'Not Set';
+                    const ownerPhone = branchUser?.phone || 'Not Set';
+
+                    // 🔴 Calculate Dues
+                    let monthsDue = 0;
+                    let totalDue = 0;
+                    
+                    if (branch.billingStartMonth && branch.monthlyFee) {
+                      const [startYear, startMonth] = branch.billingStartMonth.split('-').map(Number);
+                      const [currYear, currMonth] = currentMonthYear.split('-').map(Number);
+                      const totalMonthsActive = (currYear - startYear) * 12 + (currMonth - startMonth) + 1;
+                      
+                      if (totalMonthsActive > 0) {
+                        const paidMonthsCount = localPayments.filter(p => p.branch_id === branch.id && p.status === 'PAID').length;
+                        monthsDue = totalMonthsActive - paidMonthsCount;
+                        if (monthsDue < 0) monthsDue = 0;
+                        totalDue = monthsDue * branch.monthlyFee;
+                      }
+                    }
+
                     return (
                       <tr key={branch.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-5 font-bold text-slate-800 text-sm">{branch.name}</td>
+                        <td className="px-6 py-5 font-semibold text-slate-600 text-sm">{ownerName}</td>
+                        <td className="px-6 py-5 font-semibold text-slate-600 text-sm">{ownerPhone}</td>
                         <td className="px-6 py-5 text-center font-black text-slate-600">${branch.monthlyFee || 0}</td>
+                        <td className="px-6 py-5 text-center font-black text-rose-500">{monthsDue} Month(s)</td>
+                        <td className="px-6 py-5 text-center font-black text-rose-600">${totalDue}</td>
                         <td className="px-6 py-5 text-center">
                            {status === 'PAID' && <span className="bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest inline-block w-24">PAID</span>}
                            {status === 'PENDING' && <span className="bg-amber-100 text-amber-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest inline-block w-24">PENDING</span>}

@@ -3,8 +3,9 @@ import { MenuItem, PaymentMethod } from '../types';
 import { useRestaurant } from '../context/RestaurantContext';
 import { 
   DollarSign, Wallet, TrendingUp, CreditCard, ShoppingCart, 
-  Trash2, Plus, Minus, Search 
+  Trash2, Plus, Minus, Search, Building2 as Store 
 } from 'lucide-react';
+import Swal from 'sweetalert2'; // 🔴 SweetAlert2 ইমপোর্ট করা হলো
 
 interface POSProps {
   menuItems: MenuItem[];
@@ -21,14 +22,16 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
   
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | string>(PaymentMethod.CASH);
   
-  // 🔴 ডিসকাউন্ট স্টেট 🔴
+  // 🔴 নতুন: ক্যাটাগরি ফিল্টার স্টেট 🔴
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | string>(PaymentMethod.CASH);
   const [discountAmount, setDiscountAmount] = useState<number | ''>('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ==========================================
-  // TODAY's STATS CALCULATION
+  // TODAY's STATS CALCULATION (আপনার অরিজিনাল কোড)
   // ==========================================
   const todayStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -48,6 +51,14 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
 
     return { revenue, expenseAmount, profit, cashSales, cardSales, bkashSales, nagadSales };
   }, [sales, expenses, selectedBranchId]);
+
+  // ==========================================
+  // 🔴 নতুন: ডাইনামিক ক্যাটাগরি লিস্ট তৈরি 🔴
+  // ==========================================
+  const categories = useMemo(() => {
+    const cats = new Set(menuItems.map(item => item.category || 'General'));
+    return ['All', ...Array.from(cats)];
+  }, [menuItems]);
 
   // ==========================================
   // CART LOGIC & CALCULATION
@@ -72,14 +83,36 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
 
   const removeFromCart = (id: string) => setCart(prev => prev.filter(i => i.menuItem.id !== id));
 
-  // 🔴 Cart Calculations
   const cartSubtotal = cart.reduce((sum, item) => sum + (item.menuItem.selling_price * item.quantity), 0);
   const safeDiscount = Number(discountAmount) || 0;
   const finalTotal = Math.max(0, cartSubtotal - safeDiscount);
 
-  // 🔴 Checkout Logic (Discount Distributed Proportionally)
+  // 🔴 SweetAlert2 দিয়ে প্রফেশনাল চেকআউট লজিক 🔴
   const handleCheckout = async () => {
-    if (cart.length === 0) return alert("Cart is empty!");
+    if (cart.length === 0) {
+      return Swal.fire({
+        icon: 'warning',
+        title: 'Cart is Empty',
+        text: 'Please add items to cart before checking out.',
+        confirmButtonColor: '#f59e0b',
+        customClass: { popup: 'rounded-[2rem]' }
+      });
+    }
+
+    const result = await Swal.fire({
+      title: 'Are you sure?',
+      text: `Complete order for $${finalTotal.toFixed(2)}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#f59e0b',
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Confirm', // 🔴 'Yes' বাদ দিয়ে শুধু Confirm রাখা হয়েছে
+      cancelButtonText: 'Cancel',
+      customClass: { popup: 'rounded-[2rem]' }
+    });
+
+    if (!result.isConfirmed) return;
+
     setIsProcessing(true);
     try {
       cart.forEach(item => {
@@ -91,22 +124,64 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
       });
       setCart([]);
       setDiscountAmount('');
-      alert("Order completed successfully! Receipt generated.");
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Order Completed!',
+        text: 'Receipt generated successfully.',
+        timer: 2000,
+        showConfirmButton: false,
+        customClass: { popup: 'rounded-[2rem]' }
+      });
     } catch(e) {
-        alert("Error processing sale");
+      Swal.fire({
+        icon: 'error',
+        title: 'Checkout Failed',
+        text: 'Error processing sale.',
+        confirmButtonColor: '#f59e0b',
+        customClass: { popup: 'rounded-[2rem]' }
+      });
     } finally {
         setIsProcessing(false);
     }
   };
 
-  const filteredMenu = menuItems.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  // 🔴 নতুন: ছবি লোড করার সিকিউর ফাংশন (যাতে ছবি গায়েব না হয়)
+  const getImageUrl = (item: any) => {
+    return item.image || item.image_url || item.imageUrl || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=80';
+  };
+
+  // 🔴 নতুন: ক্যাটাগরি ও সার্চ মিলিয়ে ফিল্টার করা
+  const filteredMenu = useMemo(() => {
+    return menuItems.filter(m => {
+      const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = selectedCategory === 'All' || (m.category || 'General') === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [menuItems, searchQuery, selectedCategory]);
+
+
+  // ==========================================
+  // 🔴 নতুন: গ্লোবাল ব্রাঞ্চ রেস্ট্রিকশন 🔴
+  // ==========================================
+  if (selectedBranchId === 'all') {
+    return (
+      <div className="flex flex-col items-center justify-center h-[70vh] bg-white rounded-[2.5rem] border border-slate-100 shadow-sm animate-in fade-in duration-500">
+        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mb-6 shadow-inner">
+            <Store className="w-10 h-10 text-amber-500" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-widest mb-2">Global Mode Restricted</h2>
+        <p className="text-slate-500 font-bold text-sm tracking-wide">Please select a specific branch from the top menu to access the POS terminal.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 h-[calc(100vh-8rem)] flex flex-col">
       
-      {/* TOP STATS CARDS */}
+      {/* TOP STATS CARDS (আপনার অরিজিনাল ডিজাইন) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="p-3 bg-emerald-50 text-emerald-500 rounded-2xl"><DollarSign size={24} /></div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Today's Sale</p>
@@ -114,7 +189,7 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="p-3 bg-rose-50 text-rose-500 rounded-2xl"><Wallet size={24} /></div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Today's Expense</p>
@@ -122,7 +197,7 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className={`p-3 rounded-2xl ${todayStats.profit >= 0 ? 'bg-blue-50 text-blue-500' : 'bg-rose-50 text-rose-500'}`}>
             <TrendingUp size={24} />
           </div>
@@ -134,7 +209,7 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl"><CreditCard size={24} /></div>
           <div className="w-full">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1 mb-1">Payment Split</p>
@@ -154,7 +229,7 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
         {/* Left: Menu Items Grid */}
         <div className="flex-1 flex flex-col bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden min-h-0">
           <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-            <div className="relative">
+            <div className="relative mb-4">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input 
                 type="text" 
@@ -163,6 +238,23 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-slate-700 font-bold focus:ring-2 focus:ring-amber-500/20 transition-all"
               />
+            </div>
+            
+            {/* 🔴 নতুন: ক্যাটাগরি ফিল্টার বাটনগুলো 🔴 */}
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`whitespace-nowrap px-5 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                    selectedCategory === cat 
+                      ? 'bg-slate-900 text-amber-400 shadow-md' 
+                      : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
           </div>
           
@@ -175,11 +267,13 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
                   className="bg-white border border-slate-200 p-3 rounded-2xl hover:border-amber-400 hover:shadow-md transition-all text-left group flex flex-col h-full active:scale-95"
                 >
                   <div className="w-full aspect-[4/3] rounded-xl overflow-hidden bg-slate-100 mb-3 border border-slate-100 flex items-center justify-center">
-                    {item.image ? (
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                    ) : (
-                      <img src="https://cdn-icons-png.flaticon.com/512/3075/3075977.png" alt="Food" className="w-12 h-12 opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all" />
-                    )}
+                    {/* 🔴 আপডেট করা ইমেজ সোর্স */}
+                    <img 
+                      src={getImageUrl(item)} 
+                      alt={item.name} 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                      loading="lazy"
+                    />
                   </div>
                   
                   <h3 className="font-black text-slate-800 text-sm leading-tight mb-1 flex-1 line-clamp-2">{item.name}</h3>
@@ -187,13 +281,13 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
                 </button>
               ))}
               {filteredMenu.length === 0 && (
-                <div className="col-span-full text-center py-10 text-slate-400 font-bold">No items found.</div>
+                <div className="col-span-full text-center py-10 text-slate-400 font-bold">No items found in this category.</div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Right: Cart & Checkout Panel */}
+        {/* Right: Cart & Checkout Panel (আপনার অরিজিনাল ডিজাইন) */}
         <div className="w-full lg:w-96 flex flex-col bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden shrink-0">
           <div className="p-6 border-b border-slate-100 bg-slate-900 text-white flex items-center gap-3">
             <ShoppingCart className="w-5 h-5 text-amber-400" />
@@ -246,7 +340,6 @@ const POS: React.FC<POSProps> = ({ menuItems, onAddSale }) => {
               </div>
             </div>
 
-            {/* 🔴 Subtotal and Discount Area 🔴 */}
             <div className="space-y-3 mb-6 bg-white p-4 rounded-2xl border border-slate-100">
               <div className="flex justify-between items-center text-slate-500">
                 <span className="font-bold text-xs uppercase tracking-widest">Subtotal</span>

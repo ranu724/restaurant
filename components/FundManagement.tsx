@@ -1,159 +1,350 @@
 import React, { useState, useMemo } from 'react';
-import { Landmark, ArrowRightLeft, Wallet, CreditCard, Send, Plus } from 'lucide-react';
-import { Sale, Expense, PaymentMethod, FundTransfer } from '../types';
+import { useRestaurant } from '../context/RestaurantContext';
+import { PaymentMethod } from '../types';
+import { Building2 as Store, ArrowRightLeft, Landmark, History, ArrowUpRight } from 'lucide-react';
+import Swal from 'sweetalert2'; // 🔴 SweetAlert2 ইমপোর্ট করা হলো
 
-interface FundManagementProps {
-  sales: Sale[];
-  expenses: Expense[];
-  transfers: FundTransfer[]; // Context থেকে আসবে
-  onAddTransfer: (transfer: Omit<FundTransfer, 'id'>) => void;
-}
+const FundManagement: React.FC = () => {
+  const { sales, expenses, transfers, selectedBranchId, addTransfer } = useRestaurant();
 
-const accounts = ['Cash', 'Bank', 'bKash', 'Nagad', 'Card'];
+  const [transactionType, setTransactionType] = useState<'TRANSFER' | 'CASHOUT'>('TRANSFER');
 
-const FundManagement: React.FC<FundManagementProps> = ({ sales, expenses, transfers, onAddTransfer }) => {
-  const [showModal, setShowModal] = useState(false);
-  const [transferForm, setTransferForm] = useState({
-    from_account: 'Cash',
-    to_account: 'Bank',
+  const [transferData, setTransferData] = useState({
     amount: '',
-    reference: '',
-    date: new Date().toISOString().split('T')[0]
+    from_method: PaymentMethod.CASH as string,
+    to_method: PaymentMethod.BANK as string,
+    reference: ''
   });
 
-  // ব্যালেন্স ক্যালকুলেশন
-  const balances = useMemo(() => {
-    let calcBalances: Record<string, number> = { 'Cash': 0, 'Bank': 0, 'bKash': 0, 'Nagad': 0, 'Card': 0 };
+  const [isProcessing, setIsProcessing] = useState(false);
 
-    // সেলস থেকে আয় যোগ করা
-    sales.forEach(sale => {
-      const method = sale.payment_method || 'Cash';
-      if (calcBalances[method] !== undefined) {
-        calcBalances[method] += Number(sale.total_price);
-      }
-    });
+  // Filter data by selected branch
+  const currentBranchSales = useMemo(() => 
+    selectedBranchId === 'all' ? sales : sales.filter(s => s.branch_id === selectedBranchId),
+  [sales, selectedBranchId]);
 
-    // খরচ বাদ দেওয়া (ধরে নিচ্ছি খরচ ক্যাশ থেকে হয়, অথবা আপনি খরচেও পেমেন্ট মেথড যোগ করতে পারেন)
-    expenses.forEach(expense => {
-      calcBalances['Cash'] -= Number(expense.amount);
-    });
+  const currentBranchExpenses = useMemo(() => 
+    selectedBranchId === 'all' ? expenses : expenses.filter(e => e.branch_id === selectedBranchId),
+  [expenses, selectedBranchId]);
 
-    // ইন্টারনাল ট্রান্সফার ক্যালকুলেট করা (যেমন Cash -> Bank)
-    transfers.forEach(t => {
-      if (calcBalances[t.from_account] !== undefined) calcBalances[t.from_account] -= Number(t.amount);
-      if (calcBalances[t.to_account] !== undefined) calcBalances[t.to_account] += Number(t.amount);
-    });
+  const currentBranchTransfers = useMemo(() => 
+    selectedBranchId === 'all' ? transfers : transfers.filter(t => t.branch_id === selectedBranchId),
+  [transfers, selectedBranchId]);
 
-    return calcBalances;
-  }, [sales, expenses, transfers]);
+  // Calculate specific method balance
+  const calculateBalance = (method: string) => {
+    const methodSales = currentBranchSales.filter(s => s.payment_method === method).reduce((sum, s) => sum + Number(s.total_price), 0);
+    const methodExpenses = currentBranchExpenses.filter(e => e.payment_method === method).reduce((sum, e) => sum + Number(e.amount), 0);
+    
+    const transfersIn = currentBranchTransfers.filter(t => t.to_method === method).reduce((sum, t) => sum + Number(t.amount), 0);
+    const transfersOut = currentBranchTransfers.filter(t => t.from_method === method).reduce((sum, t) => sum + Number(t.amount), 0);
 
-  const handleTransferSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (transferForm.from_account === transferForm.to_account) {
-      alert("From and To accounts cannot be the same.");
-      return;
-    }
-    onAddTransfer({
-      ...transferForm,
-      amount: parseFloat(transferForm.amount),
-    });
-    setShowModal(false);
-    setTransferForm({ ...transferForm, amount: '', reference: '' });
+    return methodSales + transfersIn - methodExpenses - transfersOut;
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Fund Management</h2>
-          <p className="text-sm text-slate-500">Track balances across Cash, Bank, and Mobile Banking</p>
+  const balances = {
+    cash: calculateBalance(PaymentMethod.CASH),
+    card: calculateBalance(PaymentMethod.CARD),
+    bkash: calculateBalance(PaymentMethod.BKASH),
+    nagad: calculateBalance(PaymentMethod.NAGAD),
+    bank: calculateBalance(PaymentMethod.BANK)
+  };
+
+  const handleTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const customPopupClass = { popup: 'rounded-[2rem]' };
+
+    if (selectedBranchId === 'all') {
+      return Swal.fire({
+        icon: 'warning',
+        title: 'Global Mode Restricted',
+        text: 'Please select a specific branch to perform a transaction.',
+        confirmButtonColor: '#f59e0b',
+        customClass: customPopupClass
+      });
+    }
+    
+    if (transactionType === 'TRANSFER' && transferData.from_method === transferData.to_method) {
+      return Swal.fire({
+        icon: 'warning',
+        title: 'Invalid Transfer',
+        text: 'Cannot transfer to the same account.',
+        confirmButtonColor: '#f59e0b',
+        customClass: customPopupClass
+      });
+    }
+
+    const amount = Number(transferData.amount);
+    if (amount <= 0) {
+      return Swal.fire({
+        icon: 'error',
+        title: 'Invalid Amount',
+        text: 'Please enter a valid amount greater than 0.',
+        confirmButtonColor: '#f59e0b',
+        customClass: customPopupClass
+      });
+    }
+
+    const currentBalance = calculateBalance(transferData.from_method);
+    if (amount > currentBalance) {
+      return Swal.fire({
+        icon: 'error',
+        title: 'Insufficient Funds',
+        text: `Not enough balance in ${transferData.from_method}. Current balance is $${currentBalance.toFixed(2)}`,
+        confirmButtonColor: '#f59e0b',
+        customClass: customPopupClass
+      });
+    }
+
+    // 🔴 প্রফেশনাল SweetAlert2 কনফার্মেশন পপ-আপ 🔴
+    const result = await Swal.fire({
+      title: 'Are you sure?',
+      text: transactionType === 'CASHOUT' 
+        ? `Do you want to withdraw $${amount} from ${transferData.from_method}?`
+        : `Transfer $${amount} from ${transferData.from_method} to ${transferData.to_method}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: transactionType === 'CASHOUT' ? '#f43f5e' : '#f59e0b', // রোজ বা অ্যাম্বার কালার
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Confirm!',
+      cancelButtonText: 'Cancel',
+      customClass: customPopupClass
+    });
+
+    if (!result.isConfirmed) return;
+
+    setIsProcessing(true);
+    try {
+      await addTransfer({
+        date: new Date().toISOString(),
+        amount: amount,
+        from_method: transferData.from_method,
+        to_method: transactionType === 'CASHOUT' ? 'Cash Out' : transferData.to_method,
+        reference: transferData.reference || (transactionType === 'CASHOUT' ? 'Owner Withdrawal' : 'Internal Transfer'),
+        branch_id: selectedBranchId
+      });
+
+      setTransferData({
+        amount: '',
+        from_method: PaymentMethod.CASH,
+        to_method: PaymentMethod.BANK,
+        reference: ''
+      });
+      
+      // 🔴 সাকসেস অ্যানিমেশন
+      Swal.fire({
+        icon: 'success',
+        title: 'Success!',
+        text: transactionType === 'CASHOUT' ? "Cash Out successful!" : "Transfer completed successfully!",
+        timer: 2000,
+        showConfirmButton: false,
+        customClass: customPopupClass
+      });
+
+    } catch (error) {
+      console.error(error);
+      Swal.fire({
+        icon: 'error',
+        title: 'Transaction Failed',
+        text: 'Something went wrong. Please try again.',
+        confirmButtonColor: '#f59e0b',
+        customClass: customPopupClass
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  if (selectedBranchId === 'all') {
+    return (
+      <div className="flex flex-col items-center justify-center h-[70vh] bg-white rounded-[2.5rem] border border-slate-100 shadow-sm animate-in fade-in duration-500">
+        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mb-6 shadow-inner">
+            <Store className="w-10 h-10 text-amber-500" />
         </div>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="flex items-center space-x-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl hover:bg-slate-800 transition-all shadow-lg font-bold"
-        >
-          <ArrowRightLeft size={18} />
-          <span>Transfer Funds</span>
-        </button>
+        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-widest mb-2">Global Mode Restricted</h2>
+        <p className="text-slate-500 font-bold text-sm tracking-wide">Please select a specific branch from the top menu to manage funds.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-700 pb-20">
+      
+      <div className="flex items-center gap-4 border-b border-slate-200 pb-6">
+        <Landmark className="w-8 h-8 text-amber-500" />
+        <div>
+           <h1 className="text-3xl font-black text-slate-800 tracking-tight">Fund Management</h1>
+           <p className="text-xs font-bold text-slate-500 tracking-widest uppercase mt-1">Track & Transfer Balances</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        {accounts.map(acc => (
-          <div key={acc} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center">
-            <div className={`p-3 rounded-full mb-3 ${acc === 'Bank' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>
-              {acc === 'Bank' ? <Landmark size={24} /> : <Wallet size={24} />}
-            </div>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">{acc}</p>
-            <p className={`text-2xl font-black mt-1 ${balances[acc] < 0 ? 'text-rose-500' : 'text-slate-800'}`}>
-              ${balances[acc].toFixed(2)}
-            </p>
+      {/* BALANCE CARDS */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {[
+          { label: 'Cash In Drawer', amount: balances.cash, color: 'emerald' },
+          { label: 'Bank Balance', amount: balances.bank, color: 'blue' },
+          { label: 'Card / POS', amount: balances.card, color: 'indigo' },
+          { label: 'bKash', amount: balances.bkash, color: 'pink' },
+          { label: 'Nagad', amount: balances.nagad, color: 'orange' },
+        ].map((item, index) => (
+          <div key={index} className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow">
+            <p className={`text-[10px] font-black text-${item.color}-500 uppercase tracking-widest mb-2`}>{item.label}</p>
+            <p className="text-2xl font-black text-slate-800">${item.amount.toFixed(2)}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-        <h3 className="text-lg font-bold text-slate-800 mb-4">Transfer History</h3>
-        <div className="space-y-3">
-          {transfers.length > 0 ? transfers.map((t, idx) => (
-            <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="flex items-center space-x-4">
-                <div className="p-2 bg-white rounded-lg shadow-sm border border-slate-200">
-                  <ArrowRightLeft size={16} className="text-slate-500" />
-                </div>
-                <div>
-                  <p className="font-bold text-slate-800">
-                    <span className="text-rose-500">{t.from_account}</span> 
-                    <span className="text-slate-400 mx-2">→</span> 
-                    <span className="text-emerald-500">{t.to_account}</span>
-                  </p>
-                  <p className="text-xs text-slate-500">{t.date} • Ref: {t.reference || 'N/A'}</p>
-                </div>
-              </div>
-              <div className="text-lg font-black text-slate-800">
-                ${Number(t.amount).toFixed(2)}
-              </div>
-            </div>
-          )) : (
-            <p className="text-center py-6 text-slate-400 italic">No transfers recorded yet.</p>
-          )}
-        </div>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* ACTION AREA (Transfer / Cash Out) */}
+        <div className="lg:col-span-1 bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm h-fit">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-3 bg-amber-50 rounded-2xl text-amber-500"><ArrowRightLeft size={20} /></div>
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-widest">Action</h2>
+          </div>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md">
-            <h3 className="text-2xl font-black text-slate-900 mb-6">Transfer Funds</h3>
-            <form onSubmit={handleTransferSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">From</label>
-                  <select className="w-full px-4 py-3 border rounded-xl" value={transferForm.from_account} onChange={e => setTransferForm({...transferForm, from_account: e.target.value})}>
-                    {accounts.map(acc => <option key={acc}>{acc}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">To</label>
-                  <select className="w-full px-4 py-3 border rounded-xl" value={transferForm.to_account} onChange={e => setTransferForm({...transferForm, to_account: e.target.value})}>
-                    {accounts.map(acc => <option key={acc}>{acc}</option>)}
-                  </select>
-                </div>
+          <div className="flex p-1 bg-slate-50 rounded-2xl mb-6 border border-slate-100">
+            <button
+              type="button"
+              onClick={() => setTransactionType('TRANSFER')}
+              className={`flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${
+                transactionType === 'TRANSFER' ? 'bg-white text-slate-800 shadow-sm border border-slate-200' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Transfer
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransactionType('CASHOUT')}
+              className={`flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all ${
+                transactionType === 'CASHOUT' ? 'bg-white text-rose-600 shadow-sm border border-slate-200' : 'text-slate-400 hover:text-rose-400'
+              }`}
+            >
+              Cash Out
+            </button>
+          </div>
+
+          <form onSubmit={handleTransfer} className="space-y-5">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Withdraw From</label>
+              <select 
+                required
+                value={transferData.from_method}
+                onChange={e => setTransferData({...transferData, from_method: e.target.value})}
+                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-slate-800 font-bold focus:ring-2 focus:ring-amber-500/20 appearance-none"
+              >
+                {Object.values(PaymentMethod).filter(m => m !== PaymentMethod.OTHER).map(m => (
+                  <option key={m} value={m}>{m} (${calculateBalance(m).toFixed(2)})</option>
+                ))}
+              </select>
+            </div>
+
+            {transactionType === 'TRANSFER' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Transfer To</label>
+                <select 
+                  required
+                  value={transferData.to_method}
+                  onChange={e => setTransferData({...transferData, to_method: e.target.value})}
+                  className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-slate-800 font-bold focus:ring-2 focus:ring-amber-500/20 appearance-none"
+                >
+                  {Object.values(PaymentMethod).filter(m => m !== PaymentMethod.OTHER).map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Amount ($)</label>
-                <input required type="number" step="0.01" className="w-full px-4 py-3 border rounded-xl" value={transferForm.amount} onChange={e => setTransferForm({...transferForm, amount: e.target.value})} />
+            )}
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Amount ($)</label>
+              <input 
+                type="number" 
+                min="0.01" 
+                step="0.01"
+                required
+                value={transferData.amount}
+                onChange={e => setTransferData({...transferData, amount: e.target.value})}
+                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-amber-600 font-black focus:ring-2 focus:ring-amber-500/20 text-xl"
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">
+                {transactionType === 'CASHOUT' ? 'Reason / Note' : 'Reference / Note'}
+              </label>
+              <input 
+                type="text" 
+                value={transferData.reference}
+                onChange={e => setTransferData({...transferData, reference: e.target.value})}
+                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none text-slate-800 font-bold focus:ring-2 focus:ring-amber-500/20"
+                placeholder={transactionType === 'CASHOUT' ? 'e.g. Owner profit withdrawal' : 'e.g. Daily bank deposit'}
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={isProcessing}
+              className={`w-full py-5 rounded-[2rem] font-black uppercase tracking-widest text-xs transition-all shadow-lg flex items-center justify-center gap-2 ${
+                transactionType === 'CASHOUT' 
+                  ? 'bg-rose-500 text-white shadow-rose-200 hover:bg-rose-600' 
+                  : 'bg-slate-900 text-white shadow-slate-200 hover:bg-slate-800'
+              } disabled:opacity-50`}
+            >
+              {isProcessing ? 'Processing...' : (transactionType === 'CASHOUT' ? <><ArrowUpRight size={16} /> Confirm Cash Out</> : 'Confirm Transfer')}
+            </button>
+          </form>
+        </div>
+
+        {/* TRANSACTION HISTORY */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[calc(100vh-14rem)]">
+          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-100 shrink-0">
+            <div className="p-3 bg-blue-50 rounded-2xl text-blue-500"><History size={20} /></div>
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-widest">Transaction History</h2>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+            {currentBranchTransfers.length === 0 ? (
+               <div className="flex flex-col items-center justify-center h-full text-slate-400 opacity-50 space-y-4">
+                  <History size={48} />
+                  <p className="font-bold text-sm uppercase tracking-widest">No transactions found</p>
+               </div>
+            ) : (
+              <div className="space-y-3">
+                {currentBranchTransfers.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(transfer => (
+                  <div key={transfer.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between hover:border-slate-200 transition-colors">
+                    <div className="flex items-center gap-4">
+                      {transfer.to_method === 'Cash Out' ? (
+                        <div className="w-12 h-12 bg-rose-100 rounded-xl flex items-center justify-center text-rose-500 shrink-0"><ArrowUpRight size={20} /></div>
+                      ) : (
+                        <div className="w-12 h-12 bg-white shadow-sm rounded-xl flex items-center justify-center text-slate-400 shrink-0"><ArrowRightLeft size={20} /></div>
+                      )}
+                      
+                      <div>
+                        <div className="flex items-center gap-2 font-bold text-sm text-slate-800">
+                          {transfer.to_method === 'Cash Out' ? (
+                             <span className="text-rose-600 font-black uppercase tracking-widest text-[10px] bg-rose-50 px-2 py-1 rounded-md">CASH OUT</span>
+                          ) : (
+                             <>
+                               {transfer.from_method} <ArrowRightLeft className="w-3 h-3 text-slate-300" /> {transfer.to_method}
+                             </>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 font-bold mt-1">{new Date(transfer.date).toLocaleString()}</p>
+                        {transfer.reference && <p className="text-xs text-slate-500 mt-1 italic">"{transfer.reference}"</p>}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-lg font-black ${transfer.to_method === 'Cash Out' ? 'text-rose-500' : 'text-amber-500'}`}>${transfer.amount.toFixed(2)}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Reference / Note</label>
-                <input className="w-full px-4 py-3 border rounded-xl" value={transferForm.reference} onChange={e => setTransferForm({...transferForm, reference: e.target.value})} placeholder="e.g. Bank Deposit" />
-              </div>
-              <div className="flex space-x-4 pt-4">
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 bg-slate-100 rounded-xl font-bold">Cancel</button>
-                <button type="submit" className="flex-1 py-3 bg-amber-500 text-white rounded-xl font-bold shadow-lg shadow-amber-200">Confirm Transfer</button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };

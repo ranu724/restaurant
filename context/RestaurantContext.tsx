@@ -180,7 +180,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [findBranchIngredient, selectedBranchId, branches]);
 
   const filteredIngredients = useMemo(() => selectedBranchId === 'all' ? ingredients : ingredients.filter(i => i.branch_id === selectedBranchId), [ingredients, selectedBranchId]);
-  const filteredMenuItems = useMemo(() => selectedBranchId === 'all' ? menuItems : menuItems.filter(m => m.branch_id === selectedBranchId), [menuItems, selectedBranchId]);
+  const filteredMenuItems = useMemo(() => selectedBranchId === 'all' ? [] : menuItems.filter(m => m.branch_id === selectedBranchId), [menuItems, selectedBranchId]);
   const filteredSales = useMemo(() => selectedBranchId === 'all' ? sales : sales.filter(s => s.branch_id === selectedBranchId), [sales, selectedBranchId]);
   const filteredExpenses = useMemo(() => selectedBranchId === 'all' ? expenses : expenses.filter(e => e.branch_id === selectedBranchId), [expenses, selectedBranchId]);
 

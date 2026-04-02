@@ -4,6 +4,7 @@ import {
   UtensilsCrossed, Plus, Trash2, Search, X, 
   ChefHat, Image as ImageIcon, AlertCircle 
 } from 'lucide-react';
+import Swal from 'sweetalert2'; // 🔴 SweetAlert2 ইমপোর্ট করা হলো
 
 interface MenuAndRecipesProps {
   menuItems: MenuItem[];
@@ -49,7 +50,13 @@ const MenuAndRecipes: React.FC<MenuAndRecipesProps> = ({
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 2 * 1024 * 1024) { // 2MB limit
-        alert("Image size should be less than 2MB");
+        Swal.fire({
+          icon: 'error',
+          title: 'Image Too Large',
+          text: 'Image size should be less than 2MB',
+          confirmButtonColor: '#f59e0b',
+          customClass: { popup: 'rounded-[2rem]' }
+        });
         return;
       }
       const reader = new FileReader();
@@ -62,7 +69,13 @@ const MenuAndRecipes: React.FC<MenuAndRecipesProps> = ({
 
   const addRecipeRow = () => {
     if (ingredients.length === 0) {
-      alert("Please add some ingredients to your Inventory first!");
+      Swal.fire({
+        icon: 'warning',
+        title: 'Inventory Empty',
+        text: 'Please add some ingredients to your Inventory first!',
+        confirmButtonColor: '#f59e0b',
+        customClass: { popup: 'rounded-[2rem]' }
+      });
       return;
     }
     setRecipe(prev => [
@@ -100,7 +113,15 @@ const MenuAndRecipes: React.FC<MenuAndRecipesProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || sellingPrice === '') return alert("Name and Selling Price are required!");
+    if (!name || sellingPrice === '') {
+      return Swal.fire({
+        icon: 'warning',
+        title: 'Missing Info',
+        text: 'Name and Selling Price are required!',
+        confirmButtonColor: '#f59e0b',
+        customClass: { popup: 'rounded-[2rem]' }
+      });
+    }
     
     setIsSubmitting(true);
     try {
@@ -119,11 +140,52 @@ const MenuAndRecipes: React.FC<MenuAndRecipesProps> = ({
       setImage('');
       setRecipe([]);
       setIsModalOpen(false);
-      alert("Menu item created successfully!");
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Success!',
+        text: 'Menu item created successfully.',
+        timer: 2000,
+        showConfirmButton: false,
+        customClass: { popup: 'rounded-[2rem]' }
+      });
     } catch (error) {
-      alert("Failed to create menu item.");
+      Swal.fire({
+        icon: 'error',
+        title: 'Failed',
+        text: 'Failed to create menu item.',
+        confirmButtonColor: '#f59e0b',
+        customClass: { popup: 'rounded-[2rem]' }
+      });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // 🔴 প্রফেশনাল ডিলিট কনফার্মেশন ফাংশন 🔴
+  const handleDeleteItem = async (id: string) => {
+    const result = await Swal.fire({
+      title: 'Are you sure?',
+      text: "Delete this menu item?",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#f43f5e', // Rose color for delete
+      cancelButtonColor: '#94a3b8',
+      confirmButtonText: 'Confirm',
+      cancelButtonText: 'Cancel',
+      customClass: { popup: 'rounded-[2rem]' }
+    });
+
+    if (result.isConfirmed) {
+      onDelete(id);
+      Swal.fire({
+        icon: 'success',
+        title: 'Deleted!',
+        text: 'Menu item has been removed.',
+        timer: 1500,
+        showConfirmButton: false,
+        customClass: { popup: 'rounded-[2rem]' }
+      });
     }
   };
 
@@ -187,7 +249,8 @@ const MenuAndRecipes: React.FC<MenuAndRecipesProps> = ({
               <div className="p-6 flex-1 flex flex-col">
                 <div className="flex justify-between items-start mb-4">
                   <h3 className="text-xl font-black text-slate-800 leading-tight">{item.name}</h3>
-                  <button onClick={() => { if(window.confirm("Delete this menu item?")) onDelete(item.id); }} className="text-slate-400 hover:text-rose-500 transition-colors p-1">
+                  {/* 🔴 আপডেট করা ডিলিট বাটন */}
+                  <button onClick={() => handleDeleteItem(item.id)} className="text-slate-400 hover:text-rose-500 transition-colors p-1">
                     <Trash2 size={18} />
                   </button>
                 </div>
