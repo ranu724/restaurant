@@ -82,6 +82,7 @@ export enum PaymentMethod {
   CARD = 'Card',
   BKASH = 'bKash',
   NAGAD = 'Nagad',
+  BANK = 'Bank',
   OTHER = 'Other'
 }
 
